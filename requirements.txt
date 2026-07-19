@@ -1,0 +1,8 @@
+requests
+beautifulsoup4
+lxml
+feedparser
+sentence-transformers
+openai
+python-telegram-bot
+schedule
