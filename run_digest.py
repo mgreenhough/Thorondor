@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
-import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 print('=== THORONDOR DAILY DIGEST ===')
 print('Running Anduril scraper...')

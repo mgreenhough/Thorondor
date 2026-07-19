@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import os
+from dotenv import load_dotenv
 import requests
 from database import add_article
+
+load_dotenv()
 
 BEARER_TOKEN = os.getenv('X_BEARER_TOKEN')
 HEADERS = {'Authorization': f'Bearer {BEARER_TOKEN}'}

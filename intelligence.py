@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import os
+from dotenv import load_dotenv
 import pickle
 import numpy as np
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
+
+load_dotenv()
 
 MOONSHOT_KEY = os.getenv('MOONSHOT_API_KEY')
 MOONSHOT_ENDPOINT = os.getenv('MOONSHOT_API_ENDPOINT', 'https://api.moonshot.ai/v1')
