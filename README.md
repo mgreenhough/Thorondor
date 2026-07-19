@@ -1,14 +1,30 @@
 # 🦅 Thorondor
 
-AI-powered intelligence watcher. Monitors Anduril, Palmer Luckey's X feed, and tech RSS sources. Ranks articles by relevance using Moonshot AI embeddings, delivers daily digests via Telegram with 👍/👎 feedback loop.
+Aefense-tech intelligence sentinel. Monitors Anduril, Palmer Luckey's X feed, and tech RSS sources. Ranks articles by relevance using Moonshot embeddings, delivers daily digests via Telegram with 👍/👎 feedback loop.
+
+**Fully customizable** — change a few lines of code to watch whoever and whatever you want.
 
 ## Features
 
 - **Tier 1 Sources** — Anduril blog + Palmer Luckey X feed (always top priority)
-- **Tier 2 RSS** — 10 tech/defense feeds (ranked by AI relevance)
-- **Moonshot AI** — Generates "Why should I care?" summaries
+- **Tier 2 RSS** — 10 tech/defense feeds (ranked by Moonshot relevance)
+- **Smart Summaries** — "Why should I care?" context via Moonshot API
 - **Telegram Delivery** — Daily digest with inline feedback buttons
 - **Self-Learning** — Interest profile builds from your 👍/👎 clicks
+
+## Who Can You Watch?
+
+Everything is configurable. Out of the box it tracks:
+
+| Source | Type | How to Change |
+|--------|------|---------------|
+| Anduril Blog | Web scraper | Edit `scraper_anduril.py` — change `BASE_URL` |
+| Palmer Luckey | X API | Edit `monitor_x.py` — change `PalmerLuckey` username |
+| 10 Tech RSS Feeds | RSS | Edit `schema.sql` or insert into `sources` table |
+
+**Add any X account:** Change `'PalmerLuckey'` to any username in `monitor_x.py`.
+**Add any RSS feed:** Insert into the `sources` table with `source_type='rss'`.
+**Add any website:** Write a scraper module like `scraper_anduril.py` and import it in `run_digest.py`.
 
 ## Quick Start
 
