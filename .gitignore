@@ -9,3 +9,5 @@ venv/
 *.log
 CONFIG.md
 SSH_CONFIG.md
+ssh_helper.py
+BUILD_LOG.md
