@@ -1,6 +1,6 @@
 # 🦅 Thorondor
 
-A customizable defense-tech intelligence sentinel. Currently monitors all things Anduril and Palmer Luckey through his X feed, site scraper and tech RSS sources. It ranks articles by relevance, delivering daily digests via Telegram with a👍/👎 feedback loop
+A customizable intelligence sentinel. Currently monitors all things Anduril and Palmer Luckey through his X feed, site scraper and tech RSS sources. It ranks articles by relevance, delivering daily digests via Telegram with a👍/👎 feedback loop
 
 **Fully customizable** — change a few lines of code to watch whoever and whatever you want.
 
