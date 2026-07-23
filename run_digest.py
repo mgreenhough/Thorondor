@@ -8,7 +8,10 @@ import sys
 import logging
 from datetime import datetime
 
+from dotenv import load_dotenv
 import requests
+
+load_dotenv()
 
 from database import (
     get_unnotified_articles,
@@ -30,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
 
 def send_telegram_message(text: str) -> bool:
     """Send a plain text message via Telegram Bot API (one-shot, no polling)."""
@@ -73,7 +77,7 @@ def format_digest() -> tuple[str, list[int]]:
         for a in tier1:
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
             lines.append(f"• [{a['title']}]({a['url']})")
-            lines.append(f"  _{summary[:150]}..._")
+            lines.append(f"  _{summary}_")
         lines.append('')
 
     if tier2:
@@ -81,7 +85,7 @@ def format_digest() -> tuple[str, list[int]]:
         for a in tier2:
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
             lines.append(f"• [{a['title']}]({a['url']})")
-            lines.append(f"  _{summary[:150]}..._")
+            lines.append(f"  _{summary}_")
         lines.append('')
 
     if not tier1 and not tier2:

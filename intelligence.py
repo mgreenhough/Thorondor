@@ -37,9 +37,11 @@ def generate_embedding(text):
     return model.encode(text, convert_to_numpy=True).astype(np.float32)
 
 def generate_summary(article_title, article_summary, top_interests):
-    prompt = f'''Article: {article_title}
-Context: This user cares about {top_interests}.
-Explain in 2 sentences why this matters to them.'''
+    prompt = f'''Summarize this article in 1-2 concise sentences.
+Do not explain why it is relevant. Just summarize what happened.
+
+Title: {article_title}
+Content: {article_summary[:2000]}'''
     
     try:
         client = get_moonshot_client()
@@ -47,13 +49,13 @@ Explain in 2 sentences why this matters to them.'''
             response = client.chat.completions.create(
                 model='moonshot-v1-8k',
                 messages=[{'role': 'user', 'content': prompt}],
-                max_tokens=150
+                max_tokens=300
             )
             return response.choices[0].message.content.strip()
     except Exception as e:
         print(f'Summary generation failed: {e}')
     
-    return article_summary[:200] if article_summary else 'No summary available'
+    return article_summary[:500] if article_summary else 'No summary available'
 
 def compute_similarity(embedding1, embedding2):
     if embedding1 is None or embedding2 is None:

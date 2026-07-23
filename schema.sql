@@ -15,14 +15,6 @@ CREATE TABLE IF NOT EXISTS articles (
     is_notified INTEGER DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS interactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    article_id INTEGER,
-    action TEXT CHECK(action IN ('like', 'dislike', 'open', 'save', 'ignore', 'time_spent')),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (article_id) REFERENCES articles(id)
-);
-
 CREATE TABLE IF NOT EXISTS interest_profile (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity TEXT UNIQUE NOT NULL,
@@ -38,4 +30,23 @@ CREATE TABLE IF NOT EXISTS sources (
     source_type TEXT CHECK(source_type IN ('anduril', 'x_api', 'rss')),
     is_active INTEGER DEFAULT 1,
     last_fetched TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS page_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    domain TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    text_preview TEXT,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS x_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    x_user_id TEXT,
+    tier INTEGER DEFAULT 1,
+    is_active INTEGER DEFAULT 1,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
