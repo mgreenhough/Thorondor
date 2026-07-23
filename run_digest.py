@@ -66,7 +66,7 @@ def send_telegram_message(text: str) -> bool:
 
 def format_digest() -> tuple[str, list[int]]:
     """Build the markdown digest and return (text, article_ids)."""
-    tier1 = get_unnotified_articles(tier=1, limit=5)
+    tier1 = get_unnotified_articles(tier=1, limit=3)
     tier2 = get_unnotified_articles(tier=2, limit=10)
 
     date_str = datetime.now().strftime('%Y-%m-%d')
@@ -76,6 +76,9 @@ def format_digest() -> tuple[str, list[int]]:
         lines.append('🔴 TIER 1 — MUST KNOW')
         for a in tier1:
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
+            # Truncate for Telegram 4096 char limit, but keep whole words
+            if len(summary) > 200:
+                summary = summary[:200].rsplit(' ', 1)[0] + '...'
             lines.append(f"• [{a['title']}]({a['url']})")
             lines.append(f"  _{summary}_")
         lines.append('')
@@ -84,6 +87,8 @@ def format_digest() -> tuple[str, list[int]]:
         lines.append('🟡 TIER 2 — RANKED FOR YOU')
         for a in tier2:
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
+            if len(summary) > 200:
+                summary = summary[:200].rsplit(' ', 1)[0] + '...'
             lines.append(f"• [{a['title']}]({a['url']})")
             lines.append(f"  _{summary}_")
         lines.append('')
