@@ -47,6 +47,18 @@ def get_unnotified_articles_by_source(source_name, limit=1):
     conn.close()
     return [dict(row) for row in rows]
 
+
+def get_most_recent_article_by_source(source_name):
+    """Return the single most recent article for a source, regardless of is_notified."""
+    conn = get_connection()
+    row = conn.execute(
+        'SELECT * FROM articles WHERE source = ? ORDER BY created_at DESC LIMIT 1',
+        (source_name,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def mark_notified(article_ids):
     conn = get_connection()
     conn.executemany('UPDATE articles SET is_notified = 1 WHERE id = ?', [(i,) for i in article_ids])

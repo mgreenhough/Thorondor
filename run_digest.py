@@ -6,7 +6,6 @@ Runs scrapers, builds digest, sends to Telegram, marks articles notified, exits.
 import os
 import sys
 import logging
-import sqlite3
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -15,9 +14,9 @@ import requests
 load_dotenv()
 
 from database import (
-    DB_PATH,
     get_unnotified_articles,
     get_unnotified_articles_by_source,
+    get_most_recent_article_by_source,
     mark_notified,
     get_sources,
 )
@@ -34,18 +33,6 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-
-def clear_backlog():
-    """Mark all old unnotified articles as notified so they don't accumulate."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.execute("UPDATE articles SET is_notified = 1 WHERE is_notified = 0")
-    count = cur.rowcount
-    conn.commit()
-    conn.close()
-    if count:
-        logger.info(f'Cleared backlog: marked {count} old articles as notified')
-    return count
 
 
 def send_telegram_message(text: str) -> bool:
@@ -87,7 +74,7 @@ def format_digest() -> tuple[str, list[int]]:
     lines = []
     article_ids = []
 
-    # ── Tier 1: Anduril ─────────────────────────────────────────
+    # ── Tier 1: Anduril changes ─────────────────────────────────
     anduril = get_unnotified_articles_by_source('Anduril', limit=5)
     if anduril:
         lines.append('🔴 TIER 1 — ANDURIL CHANGES')
@@ -126,21 +113,25 @@ def format_digest() -> tuple[str, list[int]]:
         lines.extend(x_lines)
         lines.append('')
         article_ids.extend(x_ids)
+    else:
+        lines.append('🔴 TIER 1 — X POSTS')
+        lines.append('_No new X posts._')
+        lines.append('')
 
-    # ── Tier 2: RSS ── 1 most recent per feed ───────────────────
+    # ── Tier 2: RSS ── 1 most recent per feed (persists until newer) ─
     rss_sources = get_sources(source_type='rss', active_only=True)
     rss_lines = []
     rss_ids = []
     for source in rss_sources:
-        articles = get_unnotified_articles_by_source(source['name'], limit=1)
-        if articles:
-            a = articles[0]
-            summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
+        # Get most recent article for this source, regardless of is_notified
+        article = get_most_recent_article_by_source(source['name'])
+        if article:
+            summary = generate_summary(article['title'], article['summary'] or '', 'defense tech, AI, startups')
             if len(summary) > 150:
                 summary = summary[:150].rsplit(' ', 1)[0] + '...'
-            rss_lines.append(f"• [{a['title']}]({a['url']})")
+            rss_lines.append(f"• [{article['title']}]({article['url']})")
             rss_lines.append(f"  _{summary}_")
-            rss_ids.append(a['id'])
+            rss_ids.append(article['id'])
 
     if rss_lines:
         lines.append('🟡 TIER 2 — RSS')
@@ -158,9 +149,6 @@ def format_digest() -> tuple[str, list[int]]:
 
 def main() -> int:
     logger.info('=== THORONDOR DAILY DIGEST ===')
-
-    # 0. Clear any backlog from previous failed runs
-    clear_backlog()
 
     # 1. Collect articles
     logger.info('Running Anduril scraper...')
