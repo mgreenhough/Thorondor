@@ -6,6 +6,7 @@ Runs scrapers, builds digest, sends to Telegram, marks articles notified, exits.
 import os
 import sys
 import logging
+import sqlite3
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -14,12 +15,11 @@ import requests
 load_dotenv()
 
 from database import (
+    DB_PATH,
     get_unnotified_articles,
     get_unnotified_articles_by_source,
     mark_notified,
-    add_article,
     get_sources,
-    update_source_last_fetched
 )
 from scraper_anduril import run_anduril_scraper
 from monitor_x import run_x_monitor
@@ -36,11 +36,28 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 
+def clear_backlog():
+    """Mark all old unnotified articles as notified so they don't accumulate."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.execute("UPDATE articles SET is_notified = 1 WHERE is_notified = 0")
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    if count:
+        logger.info(f'Cleared backlog: marked {count} old articles as notified')
+    return count
+
+
 def send_telegram_message(text: str) -> bool:
     """Send a plain text message via Telegram Bot API (one-shot, no polling)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error('TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set')
         return False
+
+    # Hard cap at 3500 chars to stay well under Telegram's 4096 limit
+    if len(text) > 3500:
+        text = text[:3490].rsplit('\n', 1)[0]
+        text += '\n\n_(truncated)_'
 
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
     payload = {
@@ -76,15 +93,15 @@ def format_digest() -> tuple[str, list[int]]:
         lines.append('🔴 TIER 1 — ANDURIL CHANGES')
         for a in anduril:
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
-            if len(summary) > 200:
-                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            if len(summary) > 150:
+                summary = summary[:150].rsplit(' ', 1)[0] + '...'
             lines.append(f"• [{a['title']}]({a['url']})")
             lines.append(f"  _{summary}_")
             article_ids.append(a['id'])
         lines.append('')
 
     # ── Tier 1: X Tweets ────────────────────────────────────────
-    x_users = get_unnotified_articles(tier=1, limit=50)  # all Tier 1 not from Anduril
+    x_users = get_unnotified_articles(tier=1, limit=50)
     x_by_user = {}
     for a in x_users:
         if a['source'] not in x_by_user:
@@ -96,8 +113,8 @@ def format_digest() -> tuple[str, list[int]]:
     for username, tweets in x_by_user.items():
         for tweet in tweets[:3]:  # max 3 per user
             summary = generate_summary(tweet['title'], tweet['summary'] or '', 'defense tech, AI, startups')
-            if len(summary) > 200:
-                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            if len(summary) > 150:
+                summary = summary[:150].rsplit(' ', 1)[0] + '...'
             x_lines.append(f"• [{tweet['title']}]({tweet['url']})")
             x_lines.append(f"  _{summary}_")
             x_ids.append(tweet['id'])
@@ -117,8 +134,8 @@ def format_digest() -> tuple[str, list[int]]:
         if articles:
             a = articles[0]
             summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
-            if len(summary) > 200:
-                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            if len(summary) > 150:
+                summary = summary[:150].rsplit(' ', 1)[0] + '...'
             rss_lines.append(f"• [{a['title']}]({a['url']})")
             rss_lines.append(f"  _{summary}_")
             rss_ids.append(a['id'])
@@ -139,6 +156,9 @@ def format_digest() -> tuple[str, list[int]]:
 
 def main() -> int:
     logger.info('=== THORONDOR DAILY DIGEST ===')
+
+    # 0. Clear any backlog from previous failed runs
+    clear_backlog()
 
     # 1. Collect articles
     logger.info('Running Anduril scraper...')

@@ -3,8 +3,7 @@
 Anduril Full-Site Change Detector
 
 Crawls every page on anduril.com, hashes the cleaned text content,
-and reports ANY changes as Tier 1 articles.  Heavy rate limiting —
-we have 23+ hours between runs so we never hammer their server.
+and reports ANY changes as Tier 1 articles.  Heavy rate limiting.
 """
 import os
 import sys
@@ -14,6 +13,7 @@ import time
 import logging
 from urllib.parse import urljoin, urlparse
 from collections import deque
+from xml.etree import ElementTree as ET
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,16 +26,9 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ───────────────────────────────────────────────
 BASE_URL = 'https://www.anduril.com'
 DOMAIN = 'anduril.com'
-REQUEST_DELAY_SECONDS = 2.0   # polite crawl — 2s between requests
-MAX_PAGES = 500               # safety cap
+REQUEST_DELAY_SECONDS = 2.0
+MAX_PAGES = 500
 TIMEOUT = 30
-
-# Known Anduril subpages to always check (in case JS hides links)
-KNOWN_PATHS = [
-    '/about', '/careers', '/contact', '/newsroom', '/press',
-    '/products', '/solutions', '/defense', '/aerospace',
-    '/blog', '/company', '/leadership', '/partners',
-]
 
 # File extensions to skip
 SKIP_EXTENSIONS = {
@@ -45,7 +38,6 @@ SKIP_EXTENSIONS = {
     '.css', '.js', '.woff', '.woff2', '.ttf', '.eot',
 }
 
-# Text snippets to strip from cleaned content (boilerplate)
 BOILERPLATE_PATTERNS = [
     re.compile(r'^\s*careers\s*$', re.I),
     re.compile(r'^\s*contact\s*$', re.I),
@@ -60,19 +52,14 @@ BOILERPLATE_PATTERNS = [
 
 
 def should_skip_url(url):
-    """Return True if URL should be ignored."""
     parsed = urlparse(url)
-    # Must be anduril.com domain
     if DOMAIN not in parsed.netloc.lower():
         return True
-    # Skip fragments (same page anchors)
     if parsed.fragment and not parsed.path and not parsed.query:
         return True
-    # Skip known file extensions
     path_lower = parsed.path.lower()
     if any(path_lower.endswith(ext) for ext in SKIP_EXTENSIONS):
         return True
-    # Skip common non-content paths
     skip_paths = {'/cdn-cgi/', '/wp-json/', '/xmlrpc.php'}
     if any(path_lower.startswith(sp) for sp in skip_paths):
         return True
@@ -80,10 +67,8 @@ def should_skip_url(url):
 
 
 def normalize_url(url, base):
-    """Resolve relative URL, strip fragment, force https."""
     full = urljoin(base, url)
     parsed = urlparse(full)
-    # Strip fragment, force lowercase netloc
     clean = f"https://{parsed.netloc.lower()}{parsed.path}"
     if parsed.query:
         clean += f"?{parsed.query}"
@@ -91,12 +76,11 @@ def normalize_url(url, base):
 
 
 def fetch_page(url):
-    """Fetch a page with polite delay. Returns (status, html_text)."""
     try:
         resp = requests.get(
             url,
             timeout=TIMEOUT,
-            headers={'User-Agent': 'ThorondorBot/1.0 (+https://github.com/mgreenhough/Thorondor)'}
+            headers={'User-Agent': 'ThorondorBot/1.0'}
         )
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY_SECONDS)
@@ -107,17 +91,10 @@ def fetch_page(url):
 
 
 def extract_clean_text(html, url):
-    """
-    Strip nav, scripts, styles, footers.
-    Return cleaned text suitable for hashing and preview.
-    """
     soup = BeautifulSoup(html, 'lxml')
-
-    # Remove tags that are never content
     for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'iframe', 'noscript']):
         tag.decompose()
 
-    # Remove elements with common nav/footer class/id names
     noise_selectors = [
         'header', '.header', '#header',
         '.navigation', '#navigation', '.nav', '#nav',
@@ -130,30 +107,25 @@ def extract_clean_text(html, url):
         for el in soup.select(selector):
             el.decompose()
 
-    # Try to find the main content area first
     main = soup.find('main') or soup.find('article') or soup.find(role='main')
     if main:
         text = main.get_text(separator='\n')
     else:
         text = soup.get_text(separator='\n')
 
-    # Clean up whitespace
     lines = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        # Skip boilerplate lines
         if any(pat.match(line) for pat in BOILERPLATE_PATTERNS):
             continue
         lines.append(line)
 
-    cleaned = '\n'.join(lines)
-    return cleaned
+    return '\n'.join(lines)
 
 
 def get_text_preview(text, max_chars=300):
-    """Return a short preview of the text."""
     preview = text.replace('\n', ' ').strip()
     if len(preview) > max_chars:
         preview = preview[:max_chars].rsplit(' ', 1)[0] + '...'
@@ -161,12 +133,10 @@ def get_text_preview(text, max_chars=300):
 
 
 def discover_links(html, base_url):
-    """Find all internal links on a page."""
     soup = BeautifulSoup(html, 'lxml')
     found = set()
     for tag in soup.find_all('a', href=True):
         href = tag['href']
-        # Skip mailto, tel, javascript
         if href.startswith(('mailto:', 'tel:', 'javascript:')):
             continue
         full = normalize_url(href, base_url)
@@ -175,19 +145,44 @@ def discover_links(html, base_url):
     return found
 
 
+def discover_via_sitemap():
+    """Try to find all URLs via sitemap.xml"""
+    urls = set()
+    sitemap_urls = [
+        'https://www.anduril.com/sitemap.xml',
+        'https://www.anduril.com/sitemap_index.xml',
+    ]
+    for sitemap_url in sitemap_urls:
+        status, html = fetch_page(sitemap_url)
+        if html is None:
+            continue
+        try:
+            root = ET.fromstring(html.encode('utf-8'))
+            # Handle both sitemap index and urlset
+            for elem in root.iter():
+                if elem.tag.endswith('loc'):
+                    url = elem.text.strip()
+                    if DOMAIN in urlparse(url).netloc.lower():
+                        urls.add(url)
+        except Exception as e:
+            logger.warning(f'Sitemap parse failed for {sitemap_url}: {e}')
+    return urls
+
+
 def run_anduril_scraper():
     logger.info('=== Anduril Full-Site Change Detector ===')
-    logger.info(f'Starting crawl at {BASE_URL} with {REQUEST_DELAY_SECONDS}s delay')
 
+    # Start with homepage
     queue = deque([BASE_URL])
     seen = {BASE_URL}
 
-    # Seed known paths
-    for path in KNOWN_PATHS:
-        full = f'{BASE_URL}{path}'
-        if full not in seen:
-            seen.add(full)
-            queue.append(full)
+    # Try sitemap first for comprehensive discovery
+    sitemap_urls = discover_via_sitemap()
+    logger.info(f'Sitemap discovered {len(sitemap_urls)} URLs')
+    for url in sitemap_urls:
+        if url not in seen:
+            seen.add(url)
+            queue.append(url)
 
     checked = 0
     changed = 0
@@ -197,21 +192,17 @@ def run_anduril_scraper():
         url = queue.popleft()
         checked += 1
 
-        # Fetch
         status, html = fetch_page(url)
         if html is None:
             logger.warning(f'  [{checked}] SKIP (fetch failed): {url}')
             continue
 
-        # Extract and hash
         cleaned_text = extract_clean_text(html, url)
         text_hash = hashlib.sha256(cleaned_text.encode('utf-8')).hexdigest()
         preview = get_text_preview(cleaned_text)
 
-        # Compare to snapshot
         snapshot = get_page_snapshot(url)
         if snapshot is None:
-            # Brand new page
             logger.info(f'  [{checked}] NEW PAGE: {url}')
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
             add_article(
@@ -225,7 +216,6 @@ def run_anduril_scraper():
             )
             new_pages += 1
         elif snapshot['content_hash'] != text_hash:
-            # Page changed
             logger.info(f'  [{checked}] CHANGED: {url}')
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
             add_article(
@@ -239,11 +229,9 @@ def run_anduril_scraper():
             )
             changed += 1
         else:
-            # Unchanged — just update last_seen
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
-            logger.debug(f'  [{checked}] unchanged: {url}')
 
-        # Discover more links
+        # Also discover links from page HTML as fallback
         for link in discover_links(html, url):
             if link not in seen:
                 seen.add(link)
