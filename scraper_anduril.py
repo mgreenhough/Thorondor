@@ -187,6 +187,7 @@ def run_anduril_scraper():
     checked = 0
     changed = 0
     new_pages = 0
+    MAX_CHANGES = 5  # cap digest entries
 
     while queue and checked < MAX_PAGES:
         url = queue.popleft()
@@ -203,31 +204,29 @@ def run_anduril_scraper():
 
         snapshot = get_page_snapshot(url)
         if snapshot is None:
-            logger.info(f'  [{checked}] NEW PAGE: {url}')
+            # First time seeing this page — just store snapshot, NO article
+            logger.info(f'  [{checked}] Baseline: {url}')
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
-            add_article(
-                title=f'Anduril — New page: {urlparse(url).path or "/"}',
-                summary=preview,
-                url=url,
-                source='Anduril',
-                source_type='anduril',
-                tier=1,
-                content_hash=text_hash
-            )
             new_pages += 1
         elif snapshot['content_hash'] != text_hash:
-            logger.info(f'  [{checked}] CHANGED: {url}')
-            upsert_page_snapshot(url, DOMAIN, text_hash, preview)
-            add_article(
-                title=f'Anduril — Page changed: {urlparse(url).path or "/"}',
-                summary=preview,
-                url=url,
-                source='Anduril',
-                source_type='anduril',
-                tier=1,
-                content_hash=text_hash
-            )
-            changed += 1
+            # Page changed — only report if under cap
+            if changed < MAX_CHANGES:
+                logger.info(f'  [{checked}] CHANGED: {url}')
+                upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                add_article(
+                    title=f'Anduril — Page changed: {urlparse(url).path or "/"}',
+                    summary=preview,
+                    url=url,
+                    source='Anduril',
+                    source_type='anduril',
+                    tier=1,
+                    content_hash=text_hash
+                )
+                changed += 1
+            else:
+                # Still update snapshot but don't add article (cap reached)
+                logger.info(f'  [{checked}] CHANGED (cap reached): {url}')
+                upsert_page_snapshot(url, DOMAIN, text_hash, preview)
         else:
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
 
@@ -237,8 +236,8 @@ def run_anduril_scraper():
                 seen.add(link)
                 queue.append(link)
 
-    logger.info(f'Crawl complete. Checked {checked} pages. New: {new_pages}, Changed: {changed}')
-    return new_pages + changed
+    logger.info(f'Crawl complete. Checked {checked} pages. Baseline: {new_pages}, Changes: {changed}')
+    return changed  # only return actual changes for digest
 
 
 if __name__ == '__main__':
