@@ -88,7 +88,7 @@ def format_digest() -> tuple[str, list[int]]:
     article_ids = []
 
     # ── Tier 1: Anduril ─────────────────────────────────────────
-    anduril = get_unnotified_articles_by_source('Anduril', limit=10)
+    anduril = get_unnotified_articles_by_source('Anduril', limit=5)
     if anduril:
         lines.append('🔴 TIER 1 — ANDURIL CHANGES')
         for a in anduril:
@@ -101,9 +101,11 @@ def format_digest() -> tuple[str, list[int]]:
         lines.append('')
 
     # ── Tier 1: X Tweets ────────────────────────────────────────
-    x_users = get_unnotified_articles(tier=1, limit=50)
+    x_all = get_unnotified_articles(tier=1, limit=50)
     x_by_user = {}
-    for a in x_users:
+    for a in x_all:
+        if a['source_type'] != 'x_api':
+            continue
         if a['source'] not in x_by_user:
             x_by_user[a['source']] = []
         x_by_user[a['source']].append(a)
