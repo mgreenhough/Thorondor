@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import subprocess
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
@@ -70,7 +71,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '/digest — latest brief\n'
         '/add <username> — watch an X account (Tier 1)\n'
         '/delete <username> — stop watching\n'
-        '/list — show monitored accounts'
+        '/list — show monitored accounts\n'
+        '/update — pull latest code from GitHub'
     )
 
 
@@ -109,6 +111,22 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('\n'.join(lines))
 
 
+async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text('🔄 Pulling latest code...')
+    try:
+        result = subprocess.run(
+            ['git', 'pull'],
+            cwd='/opt/thorondor',
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        output = result.stdout.strip() or result.stderr.strip() or 'No output'
+        await update.message.reply_text(f'Git pull result:\n```\n{output[:500]}\n```')
+    except Exception as e:
+        await update.message.reply_text(f'❌ Git pull failed: {e}')
+
+
 def main():
     if not TELEGRAM_TOKEN:
         logger.error('TELEGRAM_BOT_TOKEN not set')
@@ -120,6 +138,7 @@ def main():
     app.add_handler(CommandHandler('add', add_command))
     app.add_handler(CommandHandler('delete', delete_command))
     app.add_handler(CommandHandler('list', list_command))
+    app.add_handler(CommandHandler('update', update_command))
 
     logger.info('Thorondor bot starting...')
     app.run_polling()
