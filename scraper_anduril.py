@@ -30,6 +30,13 @@ REQUEST_DELAY_SECONDS = 2.0   # polite crawl — 2s between requests
 MAX_PAGES = 500               # safety cap
 TIMEOUT = 30
 
+# Known Anduril subpages to always check (in case JS hides links)
+KNOWN_PATHS = [
+    '/about', '/careers', '/contact', '/newsroom', '/press',
+    '/products', '/solutions', '/defense', '/aerospace',
+    '/blog', '/company', '/leadership', '/partners',
+]
+
 # File extensions to skip
 SKIP_EXTENSIONS = {
     '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp',
@@ -174,6 +181,14 @@ def run_anduril_scraper():
 
     queue = deque([BASE_URL])
     seen = {BASE_URL}
+
+    # Seed known paths
+    for path in KNOWN_PATHS:
+        full = f'{BASE_URL}{path}'
+        if full not in seen:
+            seen.add(full)
+            queue.append(full)
+
     checked = 0
     changed = 0
     new_pages = 0

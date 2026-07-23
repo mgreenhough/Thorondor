@@ -15,6 +15,7 @@ load_dotenv()
 
 from database import (
     get_unnotified_articles,
+    get_unnotified_articles_by_source,
     mark_notified,
     add_article,
     get_sources,
@@ -66,38 +67,74 @@ def send_telegram_message(text: str) -> bool:
 
 def format_digest() -> tuple[str, list[int]]:
     """Build the markdown digest and return (text, article_ids)."""
-    tier1 = get_unnotified_articles(tier=1, limit=3)
-    tier2 = get_unnotified_articles(tier=2, limit=10)
+    lines = []
+    article_ids = []
+
+    # ── Tier 1: Anduril ─────────────────────────────────────────
+    anduril = get_unnotified_articles_by_source('Anduril', limit=10)
+    if anduril:
+        lines.append('🔴 TIER 1 — ANDURIL CHANGES')
+        for a in anduril:
+            summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
+            if len(summary) > 200:
+                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            lines.append(f"• [{a['title']}]({a['url']})")
+            lines.append(f"  _{summary}_")
+            article_ids.append(a['id'])
+        lines.append('')
+
+    # ── Tier 1: X Tweets ────────────────────────────────────────
+    x_users = get_unnotified_articles(tier=1, limit=50)  # all Tier 1 not from Anduril
+    x_by_user = {}
+    for a in x_users:
+        if a['source'] not in x_by_user:
+            x_by_user[a['source']] = []
+        x_by_user[a['source']].append(a)
+
+    x_lines = []
+    x_ids = []
+    for username, tweets in x_by_user.items():
+        for tweet in tweets[:3]:  # max 3 per user
+            summary = generate_summary(tweet['title'], tweet['summary'] or '', 'defense tech, AI, startups')
+            if len(summary) > 200:
+                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            x_lines.append(f"• [{tweet['title']}]({tweet['url']})")
+            x_lines.append(f"  _{summary}_")
+            x_ids.append(tweet['id'])
+
+    if x_lines:
+        lines.append('🔴 TIER 1 — X POSTS')
+        lines.extend(x_lines)
+        lines.append('')
+        article_ids.extend(x_ids)
+
+    # ── Tier 2: RSS ── 1 most recent per feed ───────────────────
+    rss_sources = get_sources(source_type='rss', active_only=True)
+    rss_lines = []
+    rss_ids = []
+    for source in rss_sources:
+        articles = get_unnotified_articles_by_source(source['name'], limit=1)
+        if articles:
+            a = articles[0]
+            summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
+            if len(summary) > 200:
+                summary = summary[:200].rsplit(' ', 1)[0] + '...'
+            rss_lines.append(f"• [{a['title']}]({a['url']})")
+            rss_lines.append(f"  _{summary}_")
+            rss_ids.append(a['id'])
+
+    if rss_lines:
+        lines.append('🟡 TIER 2 — RSS')
+        lines.extend(rss_lines)
+        lines.append('')
+        article_ids.extend(rss_ids)
+
+    if not article_ids:
+        return 'No new articles today.', []
 
     date_str = datetime.now().strftime('%Y-%m-%d')
-    lines = [f'🦅 THORONDOR DAILY BRIEFING — {date_str}', '']
-
-    if tier1:
-        lines.append('🔴 TIER 1 — MUST KNOW')
-        for a in tier1:
-            summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
-            # Truncate for Telegram 4096 char limit, but keep whole words
-            if len(summary) > 200:
-                summary = summary[:200].rsplit(' ', 1)[0] + '...'
-            lines.append(f"• [{a['title']}]({a['url']})")
-            lines.append(f"  _{summary}_")
-        lines.append('')
-
-    if tier2:
-        lines.append('🟡 TIER 2 — RANKED FOR YOU')
-        for a in tier2:
-            summary = generate_summary(a['title'], a['summary'] or '', 'defense tech, AI, startups')
-            if len(summary) > 200:
-                summary = summary[:200].rsplit(' ', 1)[0] + '...'
-            lines.append(f"• [{a['title']}]({a['url']})")
-            lines.append(f"  _{summary}_")
-        lines.append('')
-
-    if not tier1 and not tier2:
-        lines.append('No new articles today.')
-
-    article_ids = [a['id'] for a in tier1 + tier2]
-    return '\n'.join(lines), article_ids
+    header = f'🦅 THORONDOR DAILY BRIEFING — {date_str}\n\n'
+    return header + '\n'.join(lines), article_ids
 
 
 def main() -> int:
