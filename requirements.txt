@@ -5,3 +5,4 @@ feedparser
 sentence-transformers
 openai
 python-dotenv
+python-telegram-bot
