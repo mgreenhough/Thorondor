@@ -7,7 +7,7 @@ import os
 import sys
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 import requests
@@ -129,11 +129,28 @@ def format_digest() -> tuple[str, list[int]]:
         lines.append('')
 
     # ── Tier 1: X Tweets ────────────────────────────────────────
+    AGE_CUTOFF_HOURS = 36
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=AGE_CUTOFF_HOURS)
+
     x_all = get_unnotified_articles(tier=1, limit=50)
     x_by_user = {}
     for a in x_all:
         if a['source_type'] != 'x_api':
             continue
+        # Skip tweets older than 36 hours even if unnotified
+        pub = a.get('published_at')
+        if pub:
+            try:
+                if isinstance(pub, str):
+                    pub_dt = datetime.fromisoformat(pub.replace('Z', '+00:00'))
+                else:
+                    pub_dt = pub
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+                if pub_dt < cutoff:
+                    continue  # too old, skip
+            except Exception:
+                pass  # malformed date, keep it
         if a['source'] not in x_by_user:
             x_by_user[a['source']] = []
         x_by_user[a['source']].append(a)
