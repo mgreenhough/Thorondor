@@ -6,6 +6,7 @@ Runs scrapers, builds digest, sends to Telegram, marks articles notified, exits.
 import os
 import sys
 import logging
+import traceback
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -35,6 +36,11 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 
+def _strip_markdown(text: str) -> str:
+    """Strip characters that Telegram Markdown parser treats as special."""
+    return text.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
+
+
 def send_telegram_message(text: str) -> bool:
     """Send a plain text message via Telegram Bot API (one-shot, no polling)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -47,7 +53,9 @@ def send_telegram_message(text: str) -> bool:
         text += '\n\n_(truncated)_'
 
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
-    payload = {
+
+    # Try Markdown first
+    payload_md = {
         'chat_id': TELEGRAM_CHAT_ID,
         'text': text,
         'parse_mode': 'Markdown',
@@ -55,18 +63,51 @@ def send_telegram_message(text: str) -> bool:
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=60)
+        resp = requests.post(url, json=payload_md, timeout=60)
         resp.raise_for_status()
         result = resp.json()
         if result.get('ok'):
             logger.info('Digest sent successfully')
             return True
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 400:
+            logger.warning('Telegram rejected Markdown; retrying as plain text')
         else:
-            logger.error(f'Telegram API error: {result}')
+            logger.error(f'Telegram API HTTP error: {e}')
             return False
     except Exception as e:
-        logger.error(f'Failed to send Telegram message: {e}')
+        logger.error(f'Failed to send Telegram Markdown message: {e}')
         return False
+
+    # Fallback: send as plain text (strip Markdown syntax)
+    payload_plain = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': _strip_markdown(text),
+        'disable_web_page_preview': True
+    }
+
+    try:
+        resp = requests.post(url, json=payload_plain, timeout=60)
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get('ok'):
+            logger.info('Digest sent successfully (plain text fallback)')
+            return True
+        else:
+            logger.error(f'Telegram API error (plain): {result}')
+            return False
+    except Exception as e:
+        logger.error(f'Failed to send Telegram plain message: {e}')
+        return False
+
+
+def _safe_run(name, fn):
+    """Run a scraper/monitor, catching and logging any exception."""
+    try:
+        return fn()
+    except Exception:
+        logger.error(f'{name} crashed:\n{traceback.format_exc()}')
+        return 0
 
 
 def format_digest() -> tuple[str, list[int]]:
@@ -150,15 +191,16 @@ def format_digest() -> tuple[str, list[int]]:
 def main() -> int:
     logger.info('=== THORONDOR DAILY DIGEST ===')
 
-    # 1. Collect articles
+    # 1. Collect articles — each step is wrapped so a crash in one
+    #    doesn't kill the whole digest
     logger.info('Running Anduril scraper...')
-    anduril_count = run_anduril_scraper()
+    anduril_count = _safe_run('Anduril scraper', run_anduril_scraper)
 
     logger.info('Running X monitor...')
-    x_count = run_x_monitor()
+    x_count = _safe_run('X monitor', run_x_monitor)
 
     logger.info('Running RSS aggregator...')
-    rss_count = run_rss_aggregator()
+    rss_count = _safe_run('RSS aggregator', run_rss_aggregator)
 
     logger.info(f'Collection complete: {anduril_count} Anduril, {x_count} X, {rss_count} RSS')
 

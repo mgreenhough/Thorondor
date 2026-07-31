@@ -4,6 +4,4 @@ lxml
 feedparser
 sentence-transformers
 openai
-python-telegram-bot
-schedule
 python-dotenv
