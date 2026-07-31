@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS page_snapshots (
     url TEXT UNIQUE NOT NULL,
     domain TEXT NOT NULL,
     content_hash TEXT NOT NULL,
+    pending_hash TEXT,
     text_preview TEXT,
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP

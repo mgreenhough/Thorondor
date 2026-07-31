@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import requests
 from database import add_article, get_x_users, update_x_user_id, get_connection
@@ -8,6 +9,7 @@ load_dotenv()
 
 BEARER_TOKEN = os.getenv('X_BEARER_TOKEN')
 HEADERS = {'Authorization': f'Bearer {BEARER_TOKEN}'}
+AGE_CUTOFF_HOURS = 36
 
 
 def get_user_id(username):
@@ -43,6 +45,19 @@ def get_latest_stored_tweet_id(username):
     return max_id
 
 
+def is_recent_tweet(created_at_str):
+    """Return True if tweet is within AGE_CUTOFF_HOURS."""
+    if not created_at_str:
+        return True
+    try:
+        dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt >= datetime.now(timezone.utc) - timedelta(hours=AGE_CUTOFF_HOURS)
+    except Exception:
+        return True
+
+
 def fetch_tweets(user_id, username, max_results=5, since_id=None):
     url = f'https://api.twitter.com/2/users/{user_id}/tweets'
     params = {
@@ -60,14 +75,21 @@ def fetch_tweets(user_id, username, max_results=5, since_id=None):
 
     tweets = r.json().get('data', [])
     articles = []
+    skipped_old = 0
     for tweet in tweets:
+        created_at = tweet.get('created_at')
+        if not is_recent_tweet(created_at):
+            skipped_old += 1
+            continue
         tweet_url = f'https://x.com/{username}/status/{tweet["id"]}'
         articles.append({
             'title': f'@{username}: {tweet["text"][:100]}...',
             'url': tweet_url,
             'summary': tweet['text'],
-            'published_at': tweet.get('created_at')
+            'published_at': created_at
         })
+    if skipped_old:
+        print(f'  Skipped {skipped_old} old tweets for @{username}')
     return articles
 
 

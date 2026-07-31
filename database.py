@@ -88,24 +88,38 @@ def update_source_last_fetched(source_id):
 def get_page_snapshot(url):
     conn = get_connection()
     row = conn.execute(
-        'SELECT content_hash, text_preview FROM page_snapshots WHERE url = ?',
+        'SELECT content_hash, pending_hash, text_preview FROM page_snapshots WHERE url = ?',
         (url,)
     ).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
-def upsert_page_snapshot(url, domain, content_hash, text_preview):
+def upsert_page_snapshot(url, domain, content_hash, text_preview, pending_hash=None):
     conn = get_connection()
     now = datetime.now()
     conn.execute('''
-        INSERT INTO page_snapshots (url, domain, content_hash, text_preview, first_seen, last_seen)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO page_snapshots (url, domain, content_hash, pending_hash, text_preview, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url) DO UPDATE SET
             content_hash = excluded.content_hash,
+            pending_hash = excluded.pending_hash,
             text_preview = excluded.text_preview,
             last_seen = excluded.last_seen
-    ''', (url, domain, content_hash, text_preview, now, now))
+    ''', (url, domain, content_hash, pending_hash, text_preview, now, now))
+    conn.commit()
+    conn.close()
+
+
+def confirm_pending_hash(url, content_hash, text_preview):
+    """Promote pending_hash to content_hash when change is confirmed."""
+    conn = get_connection()
+    now = datetime.now()
+    conn.execute('''
+        UPDATE page_snapshots
+        SET content_hash = ?, pending_hash = NULL, text_preview = ?, last_seen = ?
+        WHERE url = ?
+    ''', (content_hash, text_preview, now, url))
     conn.commit()
     conn.close()
 

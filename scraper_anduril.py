@@ -4,6 +4,10 @@ Anduril Full-Site Change Detector
 
 Crawls every page on anduril.com, hashes the cleaned text content,
 and reports ANY changes as Tier 1 articles.  Heavy rate limiting.
+
+Uses 2-consecutive-change rule: a hash must match for 2 crawls
+before it's reported as a change. This eliminates one-off dynamic
+noise (timestamps, scripts, A/B tests).
 """
 import os
 import sys
@@ -19,7 +23,7 @@ from xml.etree import ElementTree as ET
 import requests
 from bs4 import BeautifulSoup
 
-from database import add_article, get_page_snapshot, upsert_page_snapshot
+from database import add_article, get_page_snapshot, upsert_page_snapshot, confirm_pending_hash
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -152,7 +156,6 @@ def parse_sitemap_date(date_str):
     if not date_str:
         return None
     date_str = date_str.strip()
-    # Handle various ISO formats
     formats = [
         '%Y-%m-%dT%H:%M:%S.%fZ',
         '%Y-%m-%dT%H:%M:%SZ',
@@ -184,7 +187,6 @@ def discover_via_sitemap():
             continue
         try:
             root = ET.fromstring(html.encode('utf-8'))
-            # Namespaces
             ns_sitemap = 'http://www.sitemaps.org/schemas/sitemap/0.9'
             ns_news = 'http://www.google.com/schemas/sitemap-news/0.9'
 
@@ -194,7 +196,6 @@ def discover_via_sitemap():
                     continue
                 page_url = loc.text.strip()
 
-                # Prefer news:publication_date for news pages
                 news_elem = url_elem.find(f'{{{ns_news}}}news')
                 if news_elem is not None:
                     pub_date = news_elem.find(f'{{{ns_news}}}publication_date')
@@ -204,7 +205,6 @@ def discover_via_sitemap():
                             url_dates[page_url] = dt
                             continue
 
-                # Fall back to lastmod
                 lastmod = url_elem.find(f'{{{ns_sitemap}}}lastmod')
                 if lastmod is not None and lastmod.text:
                     dt = parse_sitemap_date(lastmod.text.strip())
@@ -219,7 +219,7 @@ def discover_via_sitemap():
 def is_page_recent(lastmod_dt, cutoff_hours=AGE_CUTOFF_HOURS):
     """Return True if lastmod is within cutoff_hours of now."""
     if lastmod_dt is None:
-        return True  # no date info → don't filter
+        return True
     now = datetime.now(timezone.utc)
     age = now - lastmod_dt
     return age <= timedelta(hours=cutoff_hours)
@@ -228,11 +228,9 @@ def is_page_recent(lastmod_dt, cutoff_hours=AGE_CUTOFF_HOURS):
 def run_anduril_scraper():
     logger.info('=== Anduril Full-Site Change Detector ===')
 
-    # Start with homepage
     queue = deque([BASE_URL])
     seen = {BASE_URL}
 
-    # Try sitemap first for comprehensive discovery + dates
     sitemap_dates = discover_via_sitemap()
     logger.info(f'Sitemap discovered {len(sitemap_dates)} URLs')
     for url in sitemap_dates:
@@ -243,8 +241,9 @@ def run_anduril_scraper():
     checked = 0
     changed = 0
     new_pages = 0
+    pending = 0
     skipped_old = 0
-    MAX_CHANGES = 5  # cap digest entries
+    MAX_CHANGES = 5
 
     while queue and checked < MAX_PAGES:
         url = queue.popleft()
@@ -259,21 +258,30 @@ def run_anduril_scraper():
         text_hash = hashlib.sha256(cleaned_text.encode('utf-8')).hexdigest()
         preview = get_text_preview(cleaned_text)
 
-        # Get sitemap date for this URL (None if not in sitemap)
         sitemap_date = sitemap_dates.get(url)
 
         snapshot = get_page_snapshot(url)
         if snapshot is None:
-            # First time seeing this page — just store snapshot, NO article
+            # First time — baseline only
             logger.info(f'  [{checked}] Baseline: {url}')
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
             new_pages += 1
-        elif snapshot['content_hash'] != text_hash:
-            # Page changed — check age before reporting
+            continue
+
+        stored_hash = snapshot['content_hash']
+        pending_hash = snapshot.get('pending_hash')
+
+        if text_hash == stored_hash:
+            # Unchanged — clear any stale pending hash
+            if pending_hash is not None:
+                confirm_pending_hash(url, stored_hash, snapshot.get('text_preview', ''))
+            upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+        elif text_hash == pending_hash:
+            # Same as last crawl's pending hash → CONFIRMED CHANGE
             if is_page_recent(sitemap_date):
                 if changed < MAX_CHANGES:
-                    logger.info(f'  [{checked}] CHANGED (recent): {url}')
-                    upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                    logger.info(f'  [{checked}] CHANGED (confirmed): {url}')
+                    confirm_pending_hash(url, text_hash, preview)
                     add_article(
                         title=f'Anduril — Page changed: {urlparse(url).path or "/"}',
                         summary=preview,
@@ -286,24 +294,26 @@ def run_anduril_scraper():
                     changed += 1
                 else:
                     logger.info(f'  [{checked}] CHANGED (cap reached): {url}')
-                    upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                    confirm_pending_hash(url, text_hash, preview)
             else:
-                # Hash changed but page is old — likely dynamic noise
                 age_str = str(datetime.now(timezone.utc) - sitemap_date) if sitemap_date else 'unknown'
                 logger.info(f'  [{checked}] CHANGED (old, skipped): {url} (age: {age_str})')
-                upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                confirm_pending_hash(url, text_hash, preview)
                 skipped_old += 1
         else:
-            upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+            # New hash, but different from both stored and pending
+            # → store as pending, wait for next crawl to confirm
+            logger.info(f'  [{checked}] PENDING (unconfirmed): {url}')
+            upsert_page_snapshot(url, DOMAIN, stored_hash, preview, pending_hash=text_hash)
+            pending += 1
 
-        # Also discover links from page HTML as fallback
         for link in discover_links(html, url):
             if link not in seen:
                 seen.add(link)
                 queue.append(link)
 
-    logger.info(f'Crawl complete. Checked {checked} pages. Baseline: {new_pages}, Changes: {changed}, Skipped (old): {skipped_old}')
-    return changed  # only return actual changes for digest
+    logger.info(f'Crawl complete. Checked {checked}, Baseline: {new_pages}, Pending: {pending}, Confirmed: {changed}, Skipped(old): {skipped_old}')
+    return changed
 
 
 if __name__ == '__main__':
