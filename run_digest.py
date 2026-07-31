@@ -138,16 +138,17 @@ def format_digest() -> tuple[str, list[int]]:
         if a['source_type'] != 'x_api':
             continue
         # Skip tweets older than 36 hours even if unnotified
-        pub = a.get('published_at')
-        if pub:
+        # Try published_at first, fall back to created_at for legacy rows
+        date_str = a.get('published_at') or a.get('created_at')
+        if date_str:
             try:
-                if isinstance(pub, str):
-                    pub_dt = datetime.fromisoformat(pub.replace('Z', '+00:00'))
+                if isinstance(date_str, str):
+                    dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 else:
-                    pub_dt = pub
-                if pub_dt.tzinfo is None:
-                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-                if pub_dt < cutoff:
+                    dt = date_str
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
                     continue  # too old, skip
             except Exception:
                 pass  # malformed date, keep it
