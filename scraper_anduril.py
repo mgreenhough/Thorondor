@@ -11,6 +11,7 @@ import re
 import hashlib
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlparse
 from collections import deque
 from xml.etree import ElementTree as ET
@@ -29,6 +30,7 @@ DOMAIN = 'anduril.com'
 REQUEST_DELAY_SECONDS = 2.0
 MAX_PAGES = 500
 TIMEOUT = 30
+AGE_CUTOFF_HOURS = 36  # skip changes to pages older than this
 
 # File extensions to skip
 SKIP_EXTENSIONS = {
@@ -145,9 +147,33 @@ def discover_links(html, base_url):
     return found
 
 
+def parse_sitemap_date(date_str):
+    """Parse ISO 8601 date string from sitemap to datetime (UTC)."""
+    if not date_str:
+        return None
+    date_str = date_str.strip()
+    # Handle various ISO formats
+    formats = [
+        '%Y-%m-%dT%H:%M:%S.%fZ',
+        '%Y-%m-%dT%H:%M:%SZ',
+        '%Y-%m-%dT%H:%M:%S.%f%z',
+        '%Y-%m-%dT%H:%M:%S%z',
+        '%Y-%m-%d',
+    ]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    return None
+
+
 def discover_via_sitemap():
-    """Try to find all URLs via sitemap.xml"""
-    urls = set()
+    """Try to find all URLs via sitemap.xml, returning {url: lastmod_datetime}."""
+    url_dates = {}
     sitemap_urls = [
         'https://www.anduril.com/sitemap.xml',
         'https://www.anduril.com/sitemap_index.xml',
@@ -158,15 +184,45 @@ def discover_via_sitemap():
             continue
         try:
             root = ET.fromstring(html.encode('utf-8'))
-            # Handle both sitemap index and urlset
-            for elem in root.iter():
-                if elem.tag.endswith('loc'):
-                    url = elem.text.strip()
-                    if DOMAIN in urlparse(url).netloc.lower():
-                        urls.add(url)
+            # Namespaces
+            ns_sitemap = 'http://www.sitemaps.org/schemas/sitemap/0.9'
+            ns_news = 'http://www.google.com/schemas/sitemap-news/0.9'
+
+            for url_elem in root.iter(f'{{{ns_sitemap}}}url'):
+                loc = url_elem.find(f'{{{ns_sitemap}}}loc')
+                if loc is None or not loc.text:
+                    continue
+                page_url = loc.text.strip()
+
+                # Prefer news:publication_date for news pages
+                news_elem = url_elem.find(f'{{{ns_news}}}news')
+                if news_elem is not None:
+                    pub_date = news_elem.find(f'{{{ns_news}}}publication_date')
+                    if pub_date is not None and pub_date.text:
+                        dt = parse_sitemap_date(pub_date.text.strip())
+                        if dt:
+                            url_dates[page_url] = dt
+                            continue
+
+                # Fall back to lastmod
+                lastmod = url_elem.find(f'{{{ns_sitemap}}}lastmod')
+                if lastmod is not None and lastmod.text:
+                    dt = parse_sitemap_date(lastmod.text.strip())
+                    if dt:
+                        url_dates[page_url] = dt
+
         except Exception as e:
             logger.warning(f'Sitemap parse failed for {sitemap_url}: {e}')
-    return urls
+    return url_dates
+
+
+def is_page_recent(lastmod_dt, cutoff_hours=AGE_CUTOFF_HOURS):
+    """Return True if lastmod is within cutoff_hours of now."""
+    if lastmod_dt is None:
+        return True  # no date info → don't filter
+    now = datetime.now(timezone.utc)
+    age = now - lastmod_dt
+    return age <= timedelta(hours=cutoff_hours)
 
 
 def run_anduril_scraper():
@@ -176,10 +232,10 @@ def run_anduril_scraper():
     queue = deque([BASE_URL])
     seen = {BASE_URL}
 
-    # Try sitemap first for comprehensive discovery
-    sitemap_urls = discover_via_sitemap()
-    logger.info(f'Sitemap discovered {len(sitemap_urls)} URLs')
-    for url in sitemap_urls:
+    # Try sitemap first for comprehensive discovery + dates
+    sitemap_dates = discover_via_sitemap()
+    logger.info(f'Sitemap discovered {len(sitemap_dates)} URLs')
+    for url in sitemap_dates:
         if url not in seen:
             seen.add(url)
             queue.append(url)
@@ -187,6 +243,7 @@ def run_anduril_scraper():
     checked = 0
     changed = 0
     new_pages = 0
+    skipped_old = 0
     MAX_CHANGES = 5  # cap digest entries
 
     while queue and checked < MAX_PAGES:
@@ -202,6 +259,9 @@ def run_anduril_scraper():
         text_hash = hashlib.sha256(cleaned_text.encode('utf-8')).hexdigest()
         preview = get_text_preview(cleaned_text)
 
+        # Get sitemap date for this URL (None if not in sitemap)
+        sitemap_date = sitemap_dates.get(url)
+
         snapshot = get_page_snapshot(url)
         if snapshot is None:
             # First time seeing this page — just store snapshot, NO article
@@ -209,24 +269,30 @@ def run_anduril_scraper():
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
             new_pages += 1
         elif snapshot['content_hash'] != text_hash:
-            # Page changed — only report if under cap
-            if changed < MAX_CHANGES:
-                logger.info(f'  [{checked}] CHANGED: {url}')
-                upsert_page_snapshot(url, DOMAIN, text_hash, preview)
-                add_article(
-                    title=f'Anduril — Page changed: {urlparse(url).path or "/"}',
-                    summary=preview,
-                    url=url,
-                    source='Anduril',
-                    source_type='anduril',
-                    tier=1,
-                    content_hash=text_hash
-                )
-                changed += 1
+            # Page changed — check age before reporting
+            if is_page_recent(sitemap_date):
+                if changed < MAX_CHANGES:
+                    logger.info(f'  [{checked}] CHANGED (recent): {url}')
+                    upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                    add_article(
+                        title=f'Anduril — Page changed: {urlparse(url).path or "/"}',
+                        summary=preview,
+                        url=url,
+                        source='Anduril',
+                        source_type='anduril',
+                        tier=1,
+                        content_hash=text_hash
+                    )
+                    changed += 1
+                else:
+                    logger.info(f'  [{checked}] CHANGED (cap reached): {url}')
+                    upsert_page_snapshot(url, DOMAIN, text_hash, preview)
             else:
-                # Still update snapshot but don't add article (cap reached)
-                logger.info(f'  [{checked}] CHANGED (cap reached): {url}')
+                # Hash changed but page is old — likely dynamic noise
+                age_str = str(datetime.now(timezone.utc) - sitemap_date) if sitemap_date else 'unknown'
+                logger.info(f'  [{checked}] CHANGED (old, skipped): {url} (age: {age_str})')
                 upsert_page_snapshot(url, DOMAIN, text_hash, preview)
+                skipped_old += 1
         else:
             upsert_page_snapshot(url, DOMAIN, text_hash, preview)
 
@@ -236,7 +302,7 @@ def run_anduril_scraper():
                 seen.add(link)
                 queue.append(link)
 
-    logger.info(f'Crawl complete. Checked {checked} pages. Baseline: {new_pages}, Changes: {changed}')
+    logger.info(f'Crawl complete. Checked {checked} pages. Baseline: {new_pages}, Changes: {changed}, Skipped (old): {skipped_old}')
     return changed  # only return actual changes for digest
 
 
