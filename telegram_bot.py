@@ -10,7 +10,12 @@ from database import (
     add_x_user, delete_x_user, get_x_users
 )
 
-load_dotenv()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(SCRIPT_DIR, '.env')
+if os.path.isfile(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv()  # fallback
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -42,9 +47,14 @@ async def digest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Determine project root (same dir as this script)
     project_dir = os.path.dirname(os.path.abspath(__file__))
 
+    # Use venv Python explicitly so packages and .env are always available
+    venv_python = os.path.join(project_dir, 'venv', 'bin', 'python3')
+    if not os.path.isfile(venv_python):
+        venv_python = 'python3'  # fallback
+
     # Run run_digest.py in background so bot stays responsive
     proc = await asyncio.create_subprocess_exec(
-        'python3', 'run_digest.py',
+        venv_python, 'run_digest.py',
         cwd=project_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE

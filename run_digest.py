@@ -12,7 +12,14 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import requests
 
-load_dotenv()
+# Load .env from the same directory as this script (robust regardless of cwd)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(SCRIPT_DIR, '.env')
+if not os.path.isfile(dotenv_path):
+    logger = logging.getLogger(__name__)
+    logger.error(f'FATAL: .env not found at {dotenv_path}')
+    sys.exit(2)
+load_dotenv(dotenv_path)
 
 from database import (
     get_unnotified_articles,
@@ -34,6 +41,14 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+# ── Critical env-var validation (fail fast with a clear message) ──
+if not TELEGRAM_TOKEN:
+    logger.error('FATAL: TELEGRAM_BOT_TOKEN is not set. Ensure /opt/thorondor/.env exists and is readable.')
+    sys.exit(2)
+if not TELEGRAM_CHAT_ID:
+    logger.error('FATAL: TELEGRAM_CHAT_ID is not set. Ensure /opt/thorondor/.env exists and is readable.')
+    sys.exit(2)
 
 
 def _strip_markdown(text: str) -> str:
@@ -223,7 +238,11 @@ def main() -> int:
     logger.info(f'Collection complete: {anduril_count} Anduril, {x_count} X, {rss_count} RSS')
 
     # 2. Build digest
-    text, article_ids = format_digest()
+    try:
+        text, article_ids = format_digest()
+    except Exception:
+        logger.error(f'format_digest crashed:\n{traceback.format_exc()}')
+        return 1
 
     if not article_ids:
         logger.info('No new articles to send.')

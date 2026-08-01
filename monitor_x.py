@@ -5,7 +5,12 @@ from dotenv import load_dotenv
 import requests
 from database import add_article, get_x_users, update_x_user_id, get_connection
 
-load_dotenv()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(SCRIPT_DIR, '.env')
+if os.path.isfile(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv()  # fallback to cwd search
 
 BEARER_TOKEN = os.getenv('X_BEARER_TOKEN')
 HEADERS = {'Authorization': f'Bearer {BEARER_TOKEN}'}

@@ -6,7 +6,12 @@ import numpy as np
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 
-load_dotenv()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(SCRIPT_DIR, '.env')
+if os.path.isfile(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv()  # fallback
 
 MOONSHOT_KEY = os.getenv('MOONSHOT_API_KEY')
 MOONSHOT_ENDPOINT = os.getenv('MOONSHOT_API_ENDPOINT', 'https://api.moonshot.ai/v1')
