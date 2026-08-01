@@ -219,7 +219,7 @@ def discover_via_sitemap():
 def is_page_recent(lastmod_dt, cutoff_hours=AGE_CUTOFF_HOURS):
     """Return True if lastmod is within cutoff_hours of now."""
     if lastmod_dt is None:
-        return True
+        return False  # No sitemap date = can't verify recency, skip
     now = datetime.now(timezone.utc)
     age = now - lastmod_dt
     return age <= timedelta(hours=cutoff_hours)
